@@ -32,19 +32,54 @@
 #include <OneWire.h>
 #include <AccelStepper.h>
 
+/***************************************************
+   Feature Flags
+   Uncomment to enable, comment out to disable.
+   These are the only lines you should need to change
+   for most hardware configurations.
+ **************************************************/
+
 // If your ESP32 device does not support the standard Arduino BUILTIN_LED
 // Comment out this #define to avoid a compilation error
-#define LED_BUILTIN_SUPPORTED 1
+// #define LED_BUILTIN_SUPPORTED 1
 
 // If your ESP32 device does not support a DAC (ESP32-S3)
 // Comment out this #define to avoid a compilation error
-#define DAC_SUPPORTED 1
+// #define DAC_SUPPORTED 1
 
-/* WIFI specific defines */
-const char *ssid = "YOUR_NETWORK_SSID";
+// Uncomment to use a static IP address instead of DHCP.
+// Edit the IPAddress values in the WiFi configuration section below.
+// #define WIFI_STATIC_IP 1
+
+// Uncomment to pass sck, miso, and mosi pin numbers from the host
+// via the SPI_INIT command. Required when the default hardware SPI pins
+// are not available (ESP32-S3, custom PCBs, pin conflicts).
+// Comment out to fall back to SPI.begin() with default hardware pins.
+#define SPI_CUSTOM_PINS 1
+
+// Uncomment to send the register address as-is on a blocking SPI read.
+// Use for devices where the host controls the read/write bit in the address
+// byte (e.g. MAX31865: bit7=0 read, bit7=1 write).
+// Comment out to restore the original behaviour: address | 0x80 is sent.
+#define SPI_RAW_REGISTER_READ 1
+
+// Uncomment to keep the SPISettings object alive between set_format_spi calls.
+// Improves stability when the format is updated repeatedly at runtime.
+// Comment out to restore the original lightweight one-shot behaviour.
+#define SPI_PERSISTENT_SETTINGS 1
+
+/* WiFi configuration */
+const char *ssid     = "YOUR_NETWORK_SSID";
 const char *password = "YOUR_NETWORK_PASSWORD";
 
 uint16_t PORT = 31336;
+
+// Static IP configuration - only used when WIFI_STATIC_IP is defined above
+#ifdef WIFI_STATIC_IP
+IPAddress local_IP(192, 168, 1, 100);
+IPAddress gateway(192, 168, 1,   1);
+IPAddress subnet(255, 255, 255,  0);
+#endif
 
 WiFiServer wifiServer(PORT);
 
@@ -817,7 +852,7 @@ void i2c_read() {
   }
 
   // send slave address, register and received bytes
-    client.write(i2c_report_message, message_size + 5);
+  client.write(i2c_report_message, message_size + 5);
 }
 
 void i2c_write() {
@@ -883,15 +918,34 @@ void init_spi() {
 
   int cs_pin;
 
-  //Serial.print(command_buffer[1]);
-  // initialize chip select GPIO pins
+#ifdef SPI_CUSTOM_PINS
+  // command_buffer[0] = sck pin
+  // command_buffer[1] = miso pin
+  // command_buffer[2] = mosi pin
+  // command_buffer[3] = number of cs pins
+  // command_buffer[4..] = cs pin(s)
+  int sck  = command_buffer[0];
+  int miso = command_buffer[1];
+  int mosi = command_buffer[2];
+
+  for (int i = 0; i < command_buffer[3]; i++) {
+    cs_pin = command_buffer[4 + i];
+    // chip select is active-low, so we'll initialise it to a driven-high state
+    pinMode(cs_pin, OUTPUT);
+    digitalWrite(cs_pin, HIGH);
+  }
+  SPI.begin(sck, miso, mosi, -1);
+#else
+  // command_buffer[0] = number of cs pins
+  // command_buffer[1..] = cs pin(s)
   for (int i = 0; i < command_buffer[0]; i++) {
     cs_pin = command_buffer[1 + i];
-    // Chip select is active-low, so we'll initialise it to a driven-high state
+    // chip select is active-low, so we'll initialise it to a driven-high state
     pinMode(cs_pin, OUTPUT);
     digitalWrite(cs_pin, HIGH);
   }
   SPI.begin();
+#endif
 }
 
 // write a number of blocks to the SPI device
@@ -921,8 +975,13 @@ void read_blocking_spi() {
   spi_report_message[2] = command_buffer[1];  // register
   spi_report_message[3] = command_buffer[0];  // number of bytes read
 
-  // write the register out. OR it with 0x80 to indicate a read
+#ifdef SPI_RAW_REGISTER_READ
+  // send the register address as-is (e.g. MAX31865: bit7=0 = read, bit7=1 = write)
+  SPI.transfer(command_buffer[1]);
+#else
+  // write the register out, OR it with 0x80 to indicate a read
   SPI.transfer(command_buffer[1] | 0x80);
+#endif
 
   // now read the specified number of bytes and place
   // them in the report buffer
@@ -934,8 +993,13 @@ void read_blocking_spi() {
 
 // modify the SPI format
 void set_format_spi() {
-
+#ifdef SPI_PERSISTENT_SETTINGS
+  // static: keeps the settings object alive between calls
+  static SPISettings spi_settings;
+  spi_settings = SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
+#else
   SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
+#endif
 }
 
 // set the SPI chip select line
@@ -1596,6 +1660,11 @@ void setup() {
   // Set WiFi to station mode and disconnect from an AP if it was previously connected
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+
+#ifdef WIFI_STATIC_IP
+  WiFi.config(local_IP, gateway, subnet);
+#endif
+
   WiFi.begin(ssid, password);
   // delay(100);
 
