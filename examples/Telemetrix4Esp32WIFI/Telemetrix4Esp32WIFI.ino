@@ -68,6 +68,13 @@
 // Comment out to restore the original lightweight one-shot behaviour.
 #define SPI_PERSISTENT_SETTINGS 1
 
+// Uncomment to pass sda and scl pin numbers from the host via the
+// I2C_BEGIN command. Required when the default hardware I2C pins
+// (SDA=21, SCL=22 on a classic ESP32) are not available.
+// The command buffer is zeroed before each command, so a stock client
+// that sends no payload yields 0/0 and falls back to the default pins.
+#define I2C_CUSTOM_PINS 1
+
 /* WiFi configuration */
 const char *ssid     = "YOUR_NETWORK_SSID";
 const char *password = "YOUR_NETWORK_PASSWORD";
@@ -801,7 +808,20 @@ void servo_detach() {
  **********************************/
 
 void i2c_begin() {
+#ifdef I2C_CUSTOM_PINS
+  // command_buffer[0] = sda pin
+  // command_buffer[1] = scl pin
+  // 0/0 means the client sent no payload: use the default hardware pins.
+  byte sda = command_buffer[0];
+  byte scl = command_buffer[1];
+  if (sda == 0 && scl == 0) {
+    Wire.begin();
+  } else {
+    Wire.begin(sda, scl);
+  }
+#else
   Wire.begin();
+#endif
 }
 
 void i2c_read() {
