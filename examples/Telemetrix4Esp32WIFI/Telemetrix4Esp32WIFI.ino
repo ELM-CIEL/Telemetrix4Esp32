@@ -40,11 +40,34 @@
 // Comment out this #define to avoid a compilation error
 // #define DAC_SUPPORTED 1
 
+// If your ESP32 device does not use the standard I2C pins (SDA = 21, SCL = 22)
+// Uncomment the two #defines below and set the pins for your board
+// #define I2C_SDA_PIN 21
+// #define I2C_SCL_PIN 22
+
+// If your ESP32 device does not use the standard SPI pins
+// (SCK = 18, MISO = 19, MOSI = 23)
+// Uncomment the three #defines below and set the pins for your board
+// #define SPI_SCK_PIN 18
+// #define SPI_MISO_PIN 19
+// #define SPI_MOSI_PIN 23
+
 /* WIFI specific defines */
 const char *ssid = "TP-Link_AP_6F90";
 const char *password = "11111111";
 
 uint16_t PORT = 31336;
+
+// By default the IP address is obtained from your router via DHCP.
+// If you wish to use a fixed IP address instead, uncomment the
+// #define below and adjust the addresses to match your network
+// #define USE_STATIC_IP 1
+
+#ifdef USE_STATIC_IP
+IPAddress local_IP(192, 168, 1, 50);
+IPAddress gateway(192, 168, 1, 1);
+IPAddress subnet(255, 255, 255, 0);
+#endif
 
 WiFiServer wifiServer(PORT);
 
@@ -771,12 +794,17 @@ void servo_detach() {
 
 void i2c_begin() {
   // optional payload: command_buffer[0] = sda pin, command_buffer[1] = scl pin
-  // no payload (0, 0) = use the board's default I2C pins
+  // no payload (0, 0) = use the pins selected at the top of this sketch,
+  // or the board's default I2C pins when none were selected
   // (A4 = GPIO11 / A5 = GPIO12 on the Arduino Nano ESP32)
   if (command_buffer[0] != 0 || command_buffer[1] != 0) {
     Wire.begin((int)command_buffer[0], (int)command_buffer[1]);
   } else {
+#if defined(I2C_SDA_PIN) && defined(I2C_SCL_PIN)
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+#else
     Wire.begin();
+#endif
   }
 }
 
@@ -914,7 +942,18 @@ void init_spi() {
     pinMode(cs_pin, OUTPUT);
     digitalWrite(cs_pin, HIGH);
   }
-  SPI.begin(sck, miso, mosi, -1);
+
+  // no pins in the payload (0, 0, 0) = use the pins selected at the top
+  // of this sketch, or the board's default SPI pins when none were selected
+  if (sck == 0 && miso == 0 && mosi == 0) {
+#if defined(SPI_SCK_PIN) && defined(SPI_MISO_PIN) && defined(SPI_MOSI_PIN)
+    SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, -1);
+#else
+    SPI.begin();
+#endif
+  } else {
+    SPI.begin(sck, miso, mosi, -1);
+  }
 }
 
 // write a number of blocks to the SPI device
@@ -1674,11 +1713,10 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
-  IPAddress local_IP(172, 17, 50, 53);
-  IPAddress gateway(172, 17, 50, 123);
-  IPAddress subnet(255, 255, 255, 0);
+#ifdef USE_STATIC_IP
   WiFi.config(local_IP, gateway, subnet);
-  
+#endif
+
   WiFi.begin(ssid, password);
   // delay(100);
 
