@@ -588,8 +588,18 @@ class MyCallbacks : public BLECharacteristicCallbacks {
     //std::string rxValue = pCharacteristic->getValue();
     String rxValue = pCharacteristic->getValue();
 
+    // need at least a packet length and a command id
+    if (rxValue.length() < 2) {
+      return;
+    }
+
     // get command id
     command = rxValue[1];
+
+    // ignore out of range command ids
+    if (command >= sizeof(command_table) / sizeof(command_table[0])) {
+      return;
+    }
 
     // uncomment to see packet length and command id
     //send_debug_info(rxVal[0], rxVal[1]);
@@ -599,7 +609,11 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 
     // copy only the payload to the command buffer
     // the packet length and command id are removed.
-    for (int i = 0; i < rxValue.length() - 2; i++) {
+    int payload_length = rxValue.length() - 2;
+    if (payload_length > MAX_COMMAND_LENGTH) {
+      payload_length = MAX_COMMAND_LENGTH;
+    }
+    for (int i = 0; i < payload_length; i++) {
       command_buffer[i] = rxValue[i + 2];
       Serial.println(command_buffer[i], DEC);
     }
