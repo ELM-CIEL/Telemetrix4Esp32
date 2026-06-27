@@ -69,7 +69,7 @@
 // Comment out to restore the original lightweight one-shot behaviour.
 // #define SPI_PERSISTENT_SETTINGS 1
 
-// Uncomment to request a larger BLE ATT MTU (517) at startup so full-size
+// Uncomment to request a larger BLE ATT MTU (128) at startup so full-size
 // reports fit in a single notification. The default MTU (23) caps a
 // notification at ~20 bytes, while I2C/SPI reports can reach 64 bytes.
 // Trade-offs: uses more RAM, and the client must negotiate the MTU after
@@ -1737,7 +1737,7 @@ void setup() {
   // default mtu of 23 caps a notification at ~20 bytes. the host treats
   // each notification as one complete packet and does not reassemble.
 #ifdef BLE_LARGE_MTU
-  BLEDevice::setMTU(517);
+  BLEDevice::setMTU(128);
 #endif
 
   // Create the BLE Server
