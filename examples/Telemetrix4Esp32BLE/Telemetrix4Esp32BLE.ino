@@ -35,12 +35,12 @@
 #include <OneWire.h>
 #include <AccelStepper.h>
 
-/***************************************************
+/*
    Feature Flags
    Uncomment to enable, comment out to disable.
    These are the only lines you should need to change
    for most hardware configurations.
- **************************************************/
+ */
 
 // If your ESP32 device does not support the standard Arduino BUILTIN_LED
 // Comment out this #define to avoid a compilation error.
@@ -563,7 +563,7 @@ bool oldDeviceConnected = false;
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *pServer) {
     deviceConnected = true;
-#ifdef LED_BUILTIN
+#ifdef LED_BUILTIN_SUPPORTED
     digitalWrite(LED_BUILTIN, LOW);
 #endif
     can_scan = true;
@@ -571,7 +571,7 @@ class MyServerCallbacks : public BLEServerCallbacks {
 
   void onDisconnect(BLEServer *pServer) {
     deviceConnected = false;
-#ifdef LED_BUILTIN
+#ifdef LED_BUILTIN_SUPPORTED
     digitalWrite(LED_BUILTIN, HIGH);
 #endif
   }
@@ -969,15 +969,34 @@ void init_spi() {
 
   int cs_pin;
 
-  //Serial.print(command_buffer[1]);
-  // initialize chip select GPIO pins
+#ifdef SPI_CUSTOM_PINS
+  // command_buffer[0] = sck pin
+  // command_buffer[1] = miso pin
+  // command_buffer[2] = mosi pin
+  // command_buffer[3] = number of cs pins
+  // command_buffer[4..] = cs pin(s)
+  int sck  = command_buffer[0];
+  int miso = command_buffer[1];
+  int mosi = command_buffer[2];
+
+  for (int i = 0; i < command_buffer[3]; i++) {
+    cs_pin = command_buffer[4 + i];
+    // chip select is active-low, so we'll initialise it to a driven-high state
+    pinMode(cs_pin, OUTPUT);
+    digitalWrite(cs_pin, HIGH);
+  }
+  SPI.begin(sck, miso, mosi, -1);
+#else
+  // command_buffer[0] = number of cs pins
+  // command_buffer[1..] = cs pin(s)
   for (int i = 0; i < command_buffer[0]; i++) {
     cs_pin = command_buffer[1 + i];
-    // Chip select is active-low, so we'll initialise it to a driven-high state
+    // chip select is active-low, so we'll initialise it to a driven-high state
     pinMode(cs_pin, OUTPUT);
     digitalWrite(cs_pin, HIGH);
   }
   SPI.begin();
+#endif
 }
 
 // write a number of blocks to the SPI device
@@ -1007,8 +1026,13 @@ void read_blocking_spi() {
   spi_report_message[2] = command_buffer[1];  // register
   spi_report_message[3] = command_buffer[0];  // number of bytes read
 
-  // write the register out. OR it with 0x80 to indicate a read
+  #ifdef SPI_RAW_REGISTER_READ
+  // send the register address as-is (e.g. MAX31865: bit7=0 = read, bit7=1 = write)
+  SPI.transfer(command_buffer[1]);
+  #else
+  // write the register out, OR it with 0x80 to indicate a read
   SPI.transfer(command_buffer[1] | 0x80);
+  #endif
 
   // now read the specified number of bytes and place
   // them in the report buffer
@@ -1021,8 +1045,13 @@ void read_blocking_spi() {
 
 // modify the SPI format
 void set_format_spi() {
-
+#ifdef SPI_PERSISTENT_SETTINGS
+  // static: keeps the settings object alive between calls
+  static SPISettings spi_settings;
+  spi_settings = SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
+#else
   SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
+#endif
 }
 
 // set the SPI chip select line
