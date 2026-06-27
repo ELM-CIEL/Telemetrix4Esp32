@@ -613,9 +613,8 @@ class MyCallbacks : public BLECharacteristicCallbacks {
     if (payload_length > MAX_COMMAND_LENGTH) {
       payload_length = MAX_COMMAND_LENGTH;
     }
-    for (int i = 0; i < payload_length; i++) {
+        for (int i = 0; i < payload_length; i++) {
       command_buffer[i] = rxValue[i + 2];
-      Serial.println(command_buffer[i], DEC);
     }
     // execute the command
     command_entry.command_func();
