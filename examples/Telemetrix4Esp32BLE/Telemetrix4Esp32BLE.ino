@@ -1701,8 +1701,14 @@ void setup() {
 #endif
 
 
-  // Create the BLE Device
+    // Create the BLE Device
   BLEDevice::init("Telemetrix4ESP32BLE");
+
+  // request a larger att mtu so full size reports fit in a single
+  // notification. i2c and spi reports can be up to 64 bytes, but the
+  // default mtu of 23 caps a notification at ~20 bytes. the host treats
+  // each notification as one complete packet and does not reassemble.
+  BLEDevice::setMTU(517);
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
