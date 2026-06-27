@@ -53,8 +53,8 @@
 // #define SPI_MOSI_PIN 23
 
 /* WIFI specific defines */
-const char *ssid = "TP-Link_AP_6F90";
-const char *password = "11111111";
+const char *ssid     = "YOUR_NETWORK_SSID";
+const char *password = "YOUR_NETWORK_PASSWORD";
 
 uint16_t PORT = 31336;
 
