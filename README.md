@@ -9,13 +9,30 @@ managed via the Arduino IDE and Library Manager.
 A [User's Guide](https://mryslab.github.io/telemetrix-esp32/) explaining installation 
 and use is available online.
 
-## Changes in this fork
+## Compile-time feature flags
 
-Compile-time feature flags have been added to the WiFi server sketch, following the
-same pattern as `LED_BUILTIN_SUPPORTED` and `DAC_SUPPORTED`. All flags are at the top
-of the `.ino` file — comment out to disable, uncomment to enable.
+Both server sketches expose feature flags at the top of the `.ino`; uncomment to
+enable, comment out to disable.
 
-- `WIFI_STATIC_IP` — use a fixed IP instead of DHCP. Edit the `IPAddress` values just below the flag.
-- `SPI_CUSTOM_PINS` — lets the host pass sck/miso/mosi pin numbers via the `SPI_INIT` command, useful when default SPI pins are not available.
-- `SPI_RAW_REGISTER_READ` — sends the register address as-is on a blocking read, without the `| 0x80` mask. Required for devices like the MAX31865.
-- `SPI_PERSISTENT_SETTINGS` — keeps the `SPISettings` object alive between `set_format_spi` calls.
+### WiFi sketch (`examples/Telemetrix4Esp32WIFI`)
+
+- `USE_STATIC_IP` — use a fixed IP instead of DHCP. Edit the `IPAddress` values just below the flag.
+- `I2C_SDA_PIN` / `I2C_SCL_PIN` — override the default I2C pins.
+- `SPI_SCK_PIN` / `SPI_MISO_PIN` / `SPI_MOSI_PIN` — override the default SPI pins.
+
+The host may also pass I2C and SPI pin numbers at runtime through the command
+payload, falling back to the values above (or the board defaults) when none are sent.
+
+### BLE sketch (`examples/Telemetrix4Esp32BLE`)
+
+- `LED_BUILTIN_SUPPORTED` — drives the built-in LED as a connection indicator.
+- `DAC_SUPPORTED` — enable on boards that have a DAC.
+- `SPI_CUSTOM_PINS` — let the host pass sck/miso/mosi via the `SPI_INIT` command.
+- `SPI_RAW_REGISTER_READ` — send the register address as-is on a blocking read, without the `| 0x80` mask, for devices where the host controls the read/write bit in the address byte.
+- `SPI_PERSISTENT_SETTINGS` — keep the `SPISettings` object alive between `set_format_spi` calls.
+
+## Robustness fixes
+
+- I2C and SPI read lengths are clamped to the report buffer size.
+- Out-of-range command bytes are rejected instead of dereferencing a bad function pointer.
+- Incoming packets time out instead of hanging the main loop on a dropped byte.

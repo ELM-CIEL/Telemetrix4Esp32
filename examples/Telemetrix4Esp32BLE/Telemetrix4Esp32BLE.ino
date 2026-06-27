@@ -59,8 +59,8 @@
 #define SPI_CUSTOM_PINS 1
 
 // Uncomment to send the register address as-is on a blocking SPI read.
-// Use for devices where the host controls the read/write bit in the address
-// byte (e.g. MAX31865: bit7=0 read, bit7=1 write).
+// Use for devices where the host controls the read/write bit in the
+// address byte directly.
 // Comment out to restore the original behaviour: address | 0x80 is sent.
 #define SPI_RAW_REGISTER_READ 1
 

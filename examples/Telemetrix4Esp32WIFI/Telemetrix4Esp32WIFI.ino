@@ -796,7 +796,6 @@ void i2c_begin() {
   // optional payload: command_buffer[0] = sda pin, command_buffer[1] = scl pin
   // no payload (0, 0) = use the pins selected at the top of this sketch,
   // or the board's default I2C pins when none were selected
-  // (A4 = GPIO11 / A5 = GPIO12 on the Arduino Nano ESP32)
   if (command_buffer[0] != 0 || command_buffer[1] != 0) {
     Wire.begin((int)command_buffer[0], (int)command_buffer[1]);
   } else {
@@ -1000,7 +999,8 @@ void read_blocking_spi() {
 
   SPI.beginTransaction(spi_settings);
 
-  // Send the register address as-is (MAX31865: bit7=0 = read, bit7=1 = write)
+  // Send the register address as-is; the host is responsible for setting the
+  // read/write bit in the address byte when the target device requires it.
   SPI.transfer(command_buffer[1]);
 
   // now read the specified number of bytes and place
