@@ -46,7 +46,7 @@
 // Comment out this #define to avoid a compilation error.
 // On BLE the builtin led is used as a connection indicator:
 // on when a client is connected, off when disconnected.
-// #define LED_BUILTIN_SUPPORTED 1
+#define LED_BUILTIN_SUPPORTED 1
 
 // If your ESP32 device does not support a DAC (ESP32-S3)
 // Comment out this #define to avoid a compilation error
@@ -68,6 +68,14 @@
 // Improves stability when the format is updated repeatedly at runtime.
 // Comment out to restore the original lightweight one-shot behaviour.
 // #define SPI_PERSISTENT_SETTINGS 1
+
+// Uncomment to request a larger BLE ATT MTU (517) at startup so full-size
+// reports fit in a single notification. The default MTU (23) caps a
+// notification at ~20 bytes, while I2C/SPI reports can reach 64 bytes.
+// Trade-offs: uses more RAM, and the client must negotiate the MTU after
+// connecting -- some platforms cap or ignore the request. Leave disabled to
+// keep the standard MTU.
+// #define BLE_LARGE_MTU 1
 
 // We define the following functions as extern
 // to provide for forward referencing.
@@ -1728,7 +1736,9 @@ void setup() {
   // notification. i2c and spi reports can be up to 64 bytes, but the
   // default mtu of 23 caps a notification at ~20 bytes. the host treats
   // each notification as one complete packet and does not reassemble.
+#ifdef BLE_LARGE_MTU
   BLEDevice::setMTU(517);
+#endif
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
