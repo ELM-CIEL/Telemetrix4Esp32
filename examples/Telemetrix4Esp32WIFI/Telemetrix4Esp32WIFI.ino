@@ -34,11 +34,11 @@
 
 // If your ESP32 device does not support the standard Arduino BUILTIN_LED
 // Comment out this #define to avoid a compilation error
-// #define LED_BUILTIN_SUPPORTED 1
+#define LED_BUILTIN_SUPPORTED 1
 
 // If your ESP32 device does not support a DAC (ESP32-S3)
 // Comment out this #define to avoid a compilation error
-// #define DAC_SUPPORTED 1
+#define DAC_SUPPORTED 1
 
 // If your ESP32 device does not use the standard I2C pins (SDA = 21, SCL = 22)
 // Uncomment the two #defines below and set the pins for your board

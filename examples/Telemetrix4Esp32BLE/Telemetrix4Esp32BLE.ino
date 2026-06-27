@@ -46,7 +46,7 @@
 // Comment out this #define to avoid a compilation error.
 // On BLE the builtin led is used as a connection indicator:
 // on when a client is connected, off when disconnected.
-#define LED_BUILTIN_SUPPORTED 1
+// #define LED_BUILTIN_SUPPORTED 1
 
 // If your ESP32 device does not support a DAC (ESP32-S3)
 // Comment out this #define to avoid a compilation error
@@ -56,18 +56,18 @@
 // via the SPI_INIT command. Required when the default hardware SPI pins
 // are not available (ESP32-S3, custom PCBs, pin conflicts).
 // Comment out to fall back to SPI.begin() with default hardware pins.
-#define SPI_CUSTOM_PINS 1
+// #define SPI_CUSTOM_PINS 1
 
 // Uncomment to send the register address as-is on a blocking SPI read.
 // Use for devices where the host controls the read/write bit in the
 // address byte directly.
 // Comment out to restore the original behaviour: address | 0x80 is sent.
-#define SPI_RAW_REGISTER_READ 1
+// #define SPI_RAW_REGISTER_READ 1
 
 // Uncomment to keep the SPISettings object alive between set_format_spi calls.
 // Improves stability when the format is updated repeatedly at runtime.
 // Comment out to restore the original lightweight one-shot behaviour.
-#define SPI_PERSISTENT_SETTINGS 1
+// #define SPI_PERSISTENT_SETTINGS 1
 
 // We define the following functions as extern
 // to provide for forward referencing.
