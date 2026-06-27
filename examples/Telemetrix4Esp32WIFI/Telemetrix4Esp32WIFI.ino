@@ -819,30 +819,37 @@ void i2c_read() {
   byte address = command_buffer[0];
   byte the_register = command_buffer[1];
 
+  // clamp the requested byte count to what the report buffer can hold.
+  // i2c_report_message is 64 bytes and the data starts at index 5.
+  byte number_of_bytes = command_buffer[2];
+  if (number_of_bytes > sizeof(i2c_report_message) - 5) {
+    number_of_bytes = sizeof(i2c_report_message) - 5;
+  }
+
   Wire.beginTransmission(address);
   Wire.write((byte)the_register);
-  Wire.endTransmission(command_buffer[3]);       // default = true
-  Wire.requestFrom(address, command_buffer[2]);  // all bytes are returned in requestFrom
+  Wire.endTransmission(command_buffer[3]);     // default = true
+  Wire.requestFrom(address, number_of_bytes);  // all bytes are returned in requestFrom
 
   // check to be sure correct number of bytes were returned by slave
-  if (command_buffer[2] < Wire.available()) {
+  if (number_of_bytes < Wire.available()) {
     byte report_message[4] = { 3, I2C_TOO_FEW_BYTES_RCVD, 1, address };
     client.write(report_message, 4);
     return;
-  } else if (command_buffer[2] > Wire.available()) {
+  } else if (number_of_bytes > Wire.available()) {
     byte report_message[4] = { 3, I2C_TOO_MANY_BYTES_RCVD, 1, address };
     client.write(report_message, 4);
     return;
   }
 
   // packet length
-  i2c_report_message[0] = command_buffer[2] + 4;
+  i2c_report_message[0] = number_of_bytes + 4;
 
   // report type
   i2c_report_message[1] = I2C_READ_REPORT;
 
   // number of bytes read
-  i2c_report_message[2] = command_buffer[2];  // number of bytes
+  i2c_report_message[2] = number_of_bytes;  // number of bytes
 
   // device address
   i2c_report_message[3] = address;
@@ -851,7 +858,7 @@ void i2c_read() {
   i2c_report_message[4] = the_register;
 
   // append the data that was read
-  for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++) {
+  for (message_size = 0; message_size < number_of_bytes && Wire.available(); message_size++) {
     i2c_report_message[5 + message_size] = Wire.read();
   }
 
