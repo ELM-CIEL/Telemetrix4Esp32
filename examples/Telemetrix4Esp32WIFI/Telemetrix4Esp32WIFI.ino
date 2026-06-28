@@ -40,11 +40,34 @@
 // Comment out this #define to avoid a compilation error
 #define DAC_SUPPORTED 1
 
+// If your ESP32 device does not use the standard I2C pins (SDA = 21, SCL = 22)
+// Uncomment the two #defines below and set the pins for your board
+// #define I2C_SDA_PIN 21
+// #define I2C_SCL_PIN 22
+
+// If your ESP32 device does not use the standard SPI pins
+// (SCK = 18, MISO = 19, MOSI = 23)
+// Uncomment the three #defines below and set the pins for your board
+// #define SPI_SCK_PIN 18
+// #define SPI_MISO_PIN 19
+// #define SPI_MOSI_PIN 23
+
 /* WIFI specific defines */
-const char *ssid = "YOUR_NETWORK_SSID";
+const char *ssid     = "YOUR_NETWORK_SSID";
 const char *password = "YOUR_NETWORK_PASSWORD";
 
 uint16_t PORT = 31336;
+
+// By default the IP address is obtained from your router via DHCP.
+// If you wish to use a fixed IP address instead, uncomment the
+// #define below and adjust the addresses to match your network
+// #define USE_STATIC_IP 1
+
+#ifdef USE_STATIC_IP
+IPAddress local_IP(192, 168, 1, 50);
+IPAddress gateway(192, 168, 1, 1);
+IPAddress subnet(255, 255, 255, 0);
+#endif
 
 WiFiServer wifiServer(PORT);
 
@@ -216,7 +239,7 @@ extern void send_debug_info(byte id, int value);
 #define SET_PIN_MODE_STEPPER 36
 #define STEPPER_MOVE_TO 37
 #define STEPPER_MOVE 38
-#define STEPPER_RUN 30
+#define STEPPER_RUN 39
 #define STEPPER_RUN_SPEED 40
 #define STEPPER_SET_MAX_SPEED 41
 #define STEPPER_SET_ACCELERATION 42
@@ -365,7 +388,7 @@ command_descriptor command_table[] = {
 // firmware version - update this when bumping the version
 #define FIRMWARE_MAJOR 3
 #define FIRMWARE_MINOR 1
-#define FIRMWARE_BUILD 0
+#define FIRMWARE_BUILD 2
 
 
 // A buffer to hold i2c report data
@@ -375,6 +398,10 @@ bool stop_reports = false;  // a flag to stop sending all report messages
 
 // A buffer to hold spi report data
 byte spi_report_message[64];
+
+// Active SPI transfer settings, applied via SPI.beginTransaction() on every
+// transfer. Updated by set_format_spi(). Defaults to 1 MHz, MSB first, mode 0.
+SPISettings spi_settings = SPISettings(1000000, MSBFIRST, SPI_MODE0);
 
 
 // a descriptor for digital pins
@@ -573,6 +600,7 @@ void set_pin_mode() {
       the_digital_pins[pin].pin_mode = mode;
       the_digital_pins[pin].reporting_enabled = command_buffer[2];
       pinMode(pin, INPUT_PULLDOWN);
+      break;
     case AT_TOUCH:
       the_touch_pins[pin].differential = (command_buffer[2] << 8) + command_buffer[3];
       the_touch_pins[pin].reporting_enabled = command_buffer[4];
@@ -736,7 +764,6 @@ void servo_attach() {
 void servo_write() {
   byte pin = command_buffer[0];
   int angle = command_buffer[1];
-  servos[0].write(angle);
   // find the servo object for the pin
   for (int i = 0; i < MAX_SERVOS; i++) {
     if (pin_to_servo_index_map[i] == pin) {
@@ -766,7 +793,18 @@ void servo_detach() {
  **********************************/
 
 void i2c_begin() {
-  Wire.begin();
+  // optional payload: command_buffer[0] = sda pin, command_buffer[1] = scl pin
+  // no payload (0, 0) = use the pins selected at the top of this sketch,
+  // or the board's default I2C pins when none were selected
+  if (command_buffer[0] != 0 || command_buffer[1] != 0) {
+    Wire.begin((int)command_buffer[0], (int)command_buffer[1]);
+  } else {
+#if defined(I2C_SDA_PIN) && defined(I2C_SCL_PIN)
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+#else
+    Wire.begin();
+#endif
+  }
 }
 
 void i2c_read() {
@@ -780,30 +818,37 @@ void i2c_read() {
   byte address = command_buffer[0];
   byte the_register = command_buffer[1];
 
+  // clamp the requested byte count to what the report buffer can hold.
+  // i2c_report_message is 64 bytes and the data starts at index 5.
+  byte number_of_bytes = command_buffer[2];
+  if (number_of_bytes > sizeof(i2c_report_message) - 5) {
+    number_of_bytes = sizeof(i2c_report_message) - 5;
+  }
+
   Wire.beginTransmission(address);
   Wire.write((byte)the_register);
-  Wire.endTransmission(command_buffer[3]);       // default = true
-  Wire.requestFrom(address, command_buffer[2]);  // all bytes are returned in requestFrom
+  Wire.endTransmission(command_buffer[3]);     // default = true
+  Wire.requestFrom(address, number_of_bytes);  // all bytes are returned in requestFrom
 
   // check to be sure correct number of bytes were returned by slave
-  if (command_buffer[2] < Wire.available()) {
+  if (number_of_bytes < Wire.available()) {
     byte report_message[4] = { 3, I2C_TOO_FEW_BYTES_RCVD, 1, address };
     client.write(report_message, 4);
     return;
-  } else if (command_buffer[2] > Wire.available()) {
+  } else if (number_of_bytes > Wire.available()) {
     byte report_message[4] = { 3, I2C_TOO_MANY_BYTES_RCVD, 1, address };
     client.write(report_message, 4);
     return;
   }
 
   // packet length
-  i2c_report_message[0] = command_buffer[2] + 4;
+  i2c_report_message[0] = number_of_bytes + 4;
 
   // report type
   i2c_report_message[1] = I2C_READ_REPORT;
 
   // number of bytes read
-  i2c_report_message[2] = command_buffer[2];  // number of bytes
+  i2c_report_message[2] = number_of_bytes;  // number of bytes
 
   // device address
   i2c_report_message[3] = address;
@@ -812,12 +857,12 @@ void i2c_read() {
   i2c_report_message[4] = the_register;
 
   // append the data that was read
-  for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++) {
+  for (message_size = 0; message_size < number_of_bytes && Wire.available(); message_size++) {
     i2c_report_message[5 + message_size] = Wire.read();
   }
 
   // send slave address, register and received bytes
-    client.write(i2c_report_message, message_size + 5);
+  client.write(i2c_report_message, message_size + 5);
 }
 
 void i2c_write() {
@@ -882,25 +927,50 @@ void dht_new() {
 void init_spi() {
 
   int cs_pin;
+  int sck;
+  int miso;
+  int mosi;
 
-  //Serial.print(command_buffer[1]);
+  // command_buffer[0] = sck pin
+  // command_buffer[1] = miso pin
+  // command_buffer[2] = mosi pin
+  // command_buffer[3] = number of cs pins
+  // command_buffer[4..] = cs pin(s)
+
+  sck  = command_buffer[0];
+  miso = command_buffer[1];
+  mosi = command_buffer[2];
+
   // initialize chip select GPIO pins
-  for (int i = 0; i < command_buffer[0]; i++) {
-    cs_pin = command_buffer[1 + i];
+  for (int i = 0; i < command_buffer[3]; i++) {
+    cs_pin = command_buffer[4 + i];
     // Chip select is active-low, so we'll initialise it to a driven-high state
     pinMode(cs_pin, OUTPUT);
     digitalWrite(cs_pin, HIGH);
   }
-  SPI.begin();
+
+  // no pins in the payload (0, 0, 0) = use the pins selected at the top
+  // of this sketch, or the board's default SPI pins when none were selected
+  if (sck == 0 && miso == 0 && mosi == 0) {
+#if defined(SPI_SCK_PIN) && defined(SPI_MISO_PIN) && defined(SPI_MOSI_PIN)
+    SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, -1);
+#else
+    SPI.begin();
+#endif
+  } else {
+    SPI.begin(sck, miso, mosi, -1);
+  }
 }
 
 // write a number of blocks to the SPI device
 void write_blocking_spi() {
   int num_bytes = command_buffer[0];
 
+  SPI.beginTransaction(spi_settings);
   for (int i = 0; i < num_bytes; i++) {
     SPI.transfer(command_buffer[1 + i]);
   }
+  SPI.endTransaction();
 }
 
 // read a number of bytes from the SPI device
@@ -914,28 +984,56 @@ void read_blocking_spi() {
   // spi_report_message[3] = number of bytes returned
   // spi_report_message[4..] = data read
 
+  // clamp the read length so it cannot overflow spi_report_message[64]
+  int num_bytes = command_buffer[0];
+  if (num_bytes > (int)sizeof(spi_report_message) - 4) {
+    num_bytes = sizeof(spi_report_message) - 4;
+  }
+
   // configure the report message
   // calculate the packet length
-  spi_report_message[0] = command_buffer[0] + 3;  // packet length
+  spi_report_message[0] = num_bytes + 3;  // packet length
   spi_report_message[1] = SPI_REPORT;
   spi_report_message[2] = command_buffer[1];  // register
-  spi_report_message[3] = command_buffer[0];  // number of bytes read
+  spi_report_message[3] = num_bytes;          // number of bytes read
 
-  // write the register out. OR it with 0x80 to indicate a read
-  SPI.transfer(command_buffer[1] | 0x80);
+  SPI.beginTransaction(spi_settings);
+
+  // Send the register address as-is; the host is responsible for setting the
+  // read/write bit in the address byte when the target device requires it.
+  SPI.transfer(command_buffer[1]);
 
   // now read the specified number of bytes and place
   // them in the report buffer
-  for (int i = 0; i < command_buffer[0]; i++) {
+  for (int i = 0; i < num_bytes; i++) {
     spi_report_message[i + 4] = SPI.transfer(0x00);
   }
-  client.write(spi_report_message, command_buffer[0] + 4);
+  SPI.endTransaction();
+
+  client.write(spi_report_message, num_bytes + 4);
 }
 
 // modify the SPI format
 void set_format_spi() {
+  // command_buffer[0] = clock divisor (Arduino convention: 16 MHz / divisor)
+  // command_buffer[1] = bit order (0 = LSBFIRST, 1 = MSBFIRST)
+  // command_buffer[2] = data mode (AVR constants 0x00/0x04/0x08/0x0C or 0-3)
 
-  SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
+  uint32_t clock_freq = 1000000;
+  if (command_buffer[0] > 0) {
+    clock_freq = 16000000UL / command_buffer[0];
+  }
+
+  uint8_t bit_order = command_buffer[1] ? MSBFIRST : LSBFIRST;
+
+  // The python client documents AVR-style mode constants (0x04 = mode 1);
+  // the ESP32 core expects 0-3, so translate when needed.
+  uint8_t data_mode = command_buffer[2];
+  if (data_mode >= 4) {
+    data_mode >>= 2;
+  }
+
+  spi_settings = SPISettings(clock_freq, bit_order, data_mode);
 }
 
 // set the SPI chip select line
@@ -1187,7 +1285,7 @@ void stepper_set_current_position() {
   // position LSB = command_buffer[4]
 
   // convert the 4 position bytes to a long
-  long position = (long)(command_buffer[2]) << 24;
+  long position = (long)(command_buffer[1]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
   position += command_buffer[4];
@@ -1270,10 +1368,26 @@ void enable_all_reports() {
   stop_reports = false;
   delay(20);
 }
+// Wait for at least one byte to be available on the wifi link.
+// Returns false if the timeout expires or the client disconnects,
+// so that a dropped byte cannot hang the main loop forever.
+bool wait_for_byte() {
+  unsigned long deadline = millis() + 2000;
+  while (not client.available()) {
+    if (not client.connected() || (long)(millis() - deadline) >= 0) {
+      return false;
+    }
+    delay(1);
+  }
+  return true;
+}
+
 void get_next_command() {
   byte command;
   byte packet_length;
   command_descriptor command_entry;
+
+  const byte command_table_size = sizeof(command_table) / sizeof(command_table[0]);
 
   // clear the command buffer
   memset(command_buffer, 0, sizeof(command_buffer));
@@ -1285,8 +1399,8 @@ void get_next_command() {
   // get the packet length
   packet_length = (byte)client.read();
 
-  while (not client.available()) {
-    delay(1);
+  if (not wait_for_byte()) {
+    return;
   }
 
   // get the command byte
@@ -1294,16 +1408,25 @@ void get_next_command() {
 
   // uncomment the next line to see the packet length and command
   //send_debug_info(packet_length, command);
+
+  // protect against protocol desync: an out-of-range command byte
+  // would otherwise jump through a garbage function pointer
+  if (command >= command_table_size) {
+    return;
+  }
   command_entry = command_table[command];
 
   if (packet_length > 1) {
     // get the data for that command
     for (int i = 0; i < packet_length - 1; i++) {
-      // need this delay or data read is not correct
-      while (not client.available()) {
-        delay(1);
+      if (not wait_for_byte()) {
+        return;  // incomplete packet: drop it rather than execute garbage
       }
-      command_buffer[i] = (byte)client.read();
+      if (i < (int)sizeof(command_buffer)) {
+        command_buffer[i] = (byte)client.read();
+      } else {
+        client.read();  // discard overflow bytes
+      }
       // uncomment out to see each of the bytes following the command
       //send_debug_info(i, command_buffer[i]);
     }
@@ -1596,6 +1719,11 @@ void setup() {
   // Set WiFi to station mode and disconnect from an AP if it was previously connected
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+
+#ifdef USE_STATIC_IP
+  WiFi.config(local_IP, gateway, subnet);
+#endif
+
   WiFi.begin(ssid, password);
   // delay(100);
 

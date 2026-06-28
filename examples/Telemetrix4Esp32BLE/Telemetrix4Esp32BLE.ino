@@ -35,13 +35,47 @@
 #include <OneWire.h>
 #include <AccelStepper.h>
 
+/*
+   Feature Flags
+   Uncomment to enable, comment out to disable.
+   These are the only lines you should need to change
+   for most hardware configurations.
+ */
+
 // If your ESP32 device does not support the standard Arduino BUILTIN_LED
-// Comment out this #define to avoid a compilation error
-#define LED_BUILTIN 1
+// Comment out this #define to avoid a compilation error.
+// On BLE the builtin led is used as a connection indicator:
+// on when a client is connected, off when disconnected.
+#define LED_BUILTIN_SUPPORTED 1
 
 // If your ESP32 device does not support a DAC (ESP32-S3)
 // Comment out this #define to avoid a compilation error
 #define DAC_SUPPORTED 1
+
+// Uncomment to pass sck, miso, and mosi pin numbers from the host
+// via the SPI_INIT command. Required when the default hardware SPI pins
+// are not available (ESP32-S3, custom PCBs, pin conflicts).
+// Comment out to fall back to SPI.begin() with default hardware pins.
+// #define SPI_CUSTOM_PINS 1
+
+// Uncomment to send the register address as-is on a blocking SPI read.
+// Use for devices where the host controls the read/write bit in the
+// address byte directly.
+// Comment out to restore the original behaviour: address | 0x80 is sent.
+// #define SPI_RAW_REGISTER_READ 1
+
+// Uncomment to keep the SPISettings object alive between set_format_spi calls.
+// Improves stability when the format is updated repeatedly at runtime.
+// Comment out to restore the original lightweight one-shot behaviour.
+// #define SPI_PERSISTENT_SETTINGS 1
+
+// Uncomment to request a larger BLE ATT MTU (128) at startup so full-size
+// reports fit in a single notification. The default MTU (23) caps a
+// notification at ~20 bytes, while I2C/SPI reports can reach 64 bytes.
+// Trade-offs: uses more RAM, and the client must negotiate the MTU after
+// connecting -- some platforms cap or ignore the request. Leave disabled to
+// keep the standard MTU.
+// #define BLE_LARGE_MTU 1
 
 // We define the following functions as extern
 // to provide for forward referencing.
@@ -537,7 +571,7 @@ bool oldDeviceConnected = false;
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *pServer) {
     deviceConnected = true;
-#ifdef LED_BUILTIN
+#ifdef LED_BUILTIN_SUPPORTED
     digitalWrite(LED_BUILTIN, LOW);
 #endif
     can_scan = true;
@@ -545,7 +579,7 @@ class MyServerCallbacks : public BLEServerCallbacks {
 
   void onDisconnect(BLEServer *pServer) {
     deviceConnected = false;
-#ifdef LED_BUILTIN
+#ifdef LED_BUILTIN_SUPPORTED
     digitalWrite(LED_BUILTIN, HIGH);
 #endif
   }
@@ -562,8 +596,18 @@ class MyCallbacks : public BLECharacteristicCallbacks {
     //std::string rxValue = pCharacteristic->getValue();
     String rxValue = pCharacteristic->getValue();
 
+    // need at least a packet length and a command id
+    if (rxValue.length() < 2) {
+      return;
+    }
+
     // get command id
     command = rxValue[1];
+
+    // ignore out of range command ids
+    if (command >= sizeof(command_table) / sizeof(command_table[0])) {
+      return;
+    }
 
     // uncomment to see packet length and command id
     //send_debug_info(rxVal[0], rxVal[1]);
@@ -573,9 +617,12 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 
     // copy only the payload to the command buffer
     // the packet length and command id are removed.
-    for (int i = 0; i < rxValue.length() - 2; i++) {
+    int payload_length = rxValue.length() - 2;
+    if (payload_length > MAX_COMMAND_LENGTH) {
+      payload_length = MAX_COMMAND_LENGTH;
+    }
+        for (int i = 0; i < payload_length; i++) {
       command_buffer[i] = rxValue[i + 2];
-      Serial.println(command_buffer[i], DEC);
     }
     // execute the command
     command_entry.command_func();
@@ -837,18 +884,25 @@ void i2c_read() {
   byte address = command_buffer[0];
   byte the_register = command_buffer[1];
 
+  // clamp the requested byte count to what the report buffer can hold.
+  // i2c_report_message is 64 bytes and the data starts at index 5.
+  byte number_of_bytes = command_buffer[2];
+  if (number_of_bytes > sizeof(i2c_report_message) - 5) {
+    number_of_bytes = sizeof(i2c_report_message) - 5;
+  }
+
   Wire.beginTransmission(address);
   Wire.write((byte)the_register);
-  Wire.endTransmission(command_buffer[3]);       // default = true
-  Wire.requestFrom(address, command_buffer[2]);  // all bytes are returned in requestFrom
+  Wire.endTransmission(command_buffer[3]);     // default = true
+  Wire.requestFrom(address, number_of_bytes);  // all bytes are returned in requestFrom
 
   // check to be sure correct number of bytes were returned by slave
-  if (command_buffer[2] < Wire.available()) {
+  if (number_of_bytes < Wire.available()) {
     byte report_message[4] = { 3, I2C_TOO_FEW_BYTES_RCVD, 1, address };
     pTxCharacteristic->setValue(report_message, 4);
     pTxCharacteristic->notify();
     return;
-  } else if (command_buffer[2] > Wire.available()) {
+  } else if (number_of_bytes > Wire.available()) {
     byte report_message[4] = { 3, I2C_TOO_MANY_BYTES_RCVD, 1, address };
     pTxCharacteristic->setValue(report_message, 4);
     pTxCharacteristic->notify();
@@ -856,13 +910,13 @@ void i2c_read() {
   }
 
   // packet length
-  i2c_report_message[0] = command_buffer[2] + 4;
+  i2c_report_message[0] = number_of_bytes + 4;
 
   // report type
   i2c_report_message[1] = I2C_READ_REPORT;
 
   // number of bytes read
-  i2c_report_message[2] = command_buffer[2];  // number of bytes
+  i2c_report_message[2] = number_of_bytes;  // number of bytes
 
   // device address
   i2c_report_message[3] = address;
@@ -871,7 +925,7 @@ void i2c_read() {
   i2c_report_message[4] = the_register;
 
   // append the data that was read
-  for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++) {
+  for (message_size = 0; message_size < number_of_bytes && Wire.available(); message_size++) {
     i2c_report_message[5 + message_size] = Wire.read();
   }
 
@@ -943,15 +997,34 @@ void init_spi() {
 
   int cs_pin;
 
-  //Serial.print(command_buffer[1]);
-  // initialize chip select GPIO pins
+#ifdef SPI_CUSTOM_PINS
+  // command_buffer[0] = sck pin
+  // command_buffer[1] = miso pin
+  // command_buffer[2] = mosi pin
+  // command_buffer[3] = number of cs pins
+  // command_buffer[4..] = cs pin(s)
+  int sck  = command_buffer[0];
+  int miso = command_buffer[1];
+  int mosi = command_buffer[2];
+
+  for (int i = 0; i < command_buffer[3]; i++) {
+    cs_pin = command_buffer[4 + i];
+    // chip select is active-low, so we'll initialise it to a driven-high state
+    pinMode(cs_pin, OUTPUT);
+    digitalWrite(cs_pin, HIGH);
+  }
+  SPI.begin(sck, miso, mosi, -1);
+#else
+  // command_buffer[0] = number of cs pins
+  // command_buffer[1..] = cs pin(s)
   for (int i = 0; i < command_buffer[0]; i++) {
     cs_pin = command_buffer[1 + i];
-    // Chip select is active-low, so we'll initialise it to a driven-high state
+    // chip select is active-low, so we'll initialise it to a driven-high state
     pinMode(cs_pin, OUTPUT);
     digitalWrite(cs_pin, HIGH);
   }
   SPI.begin();
+#endif
 }
 
 // write a number of blocks to the SPI device
@@ -981,8 +1054,13 @@ void read_blocking_spi() {
   spi_report_message[2] = command_buffer[1];  // register
   spi_report_message[3] = command_buffer[0];  // number of bytes read
 
-  // write the register out. OR it with 0x80 to indicate a read
+  #ifdef SPI_RAW_REGISTER_READ
+  // send the register address as-is (e.g. MAX31865: bit7=0 = read, bit7=1 = write)
+  SPI.transfer(command_buffer[1]);
+  #else
+  // write the register out, OR it with 0x80 to indicate a read
   SPI.transfer(command_buffer[1] | 0x80);
+  #endif
 
   // now read the specified number of bytes and place
   // them in the report buffer
@@ -995,8 +1073,13 @@ void read_blocking_spi() {
 
 // modify the SPI format
 void set_format_spi() {
-
+#ifdef SPI_PERSISTENT_SETTINGS
+  // static: keeps the settings object alive between calls
+  static SPISettings spi_settings;
+  spi_settings = SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
+#else
   SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
+#endif
 }
 
 // set the SPI chip select line
@@ -1646,8 +1729,16 @@ void setup() {
 #endif
 
 
-  // Create the BLE Device
+    // Create the BLE Device
   BLEDevice::init("Telemetrix4ESP32BLE");
+
+  // request a larger att mtu so full size reports fit in a single
+  // notification. i2c and spi reports can be up to 64 bytes, but the
+  // default mtu of 23 caps a notification at ~20 bytes. the host treats
+  // each notification as one complete packet and does not reassemble.
+#ifdef BLE_LARGE_MTU
+  BLEDevice::setMTU(128);
+#endif
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
